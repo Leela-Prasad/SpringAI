@@ -1,0 +1,67 @@
+package com.mcp.springai_playground.sec08.host.config;
+
+import com.mcp.springai_playground.sec08.host.dto.NotificationEvent;
+import com.mcp.springai_playground.sec08.host.dto.UserNotification;
+import com.mcp.springai_playground.sec08.host.dto.McpSessionManifest;
+import com.mcp.springai_playground.sec08.host.dto.UserNotificationResponse;
+import org.apache.catalina.User;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
+import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.memory.MessageWindowChatMemory;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.tool.ToolCallbackProvider;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.io.Resource;
+import reactor.core.publisher.Sinks;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.util.Arrays;
+import java.util.List;
+
+@Configuration
+public class ApplicationConfiguration {
+
+    @Bean
+    public ChatClient chatClient(ChatClient.Builder builder, ToolCallbackProvider toolCallbackProvider,
+                                 @Value("classpath:${section}/system-message.txt") Resource systemMessage) {
+
+        var chatMemory = MessageWindowChatMemory.builder().maxMessages(20).build();
+        var chatMemoryAdvisor = MessageChatMemoryAdvisor.builder(chatMemory).build();
+        return builder.defaultSystem(systemMessage)
+                .defaultAdvisors(spec -> spec.advisors(chatMemoryAdvisor)
+                        .param(ChatMemory.CONVERSATION_ID, "default"))
+                .defaultToolCallbacks(toolCallbackProvider)
+                .build();
+    }
+
+    @Bean
+    public McpSessionManifest mcpSessionManifest(ChatModel chatModel, ToolCallbackProvider toolCallbackProvider,
+                                                 @Value("classpath:${section}/suggested-inputs.txt") Resource suggestedUserInputs) throws IOException {
+        var modelName = chatModel.getOptions().getModel();
+        List<String> tools = Arrays.stream(toolCallbackProvider.getToolCallbacks())
+                .map(toolCallback -> toolCallback.getToolDefinition().name())
+                .toList();
+        var suggestedInputs = Files.readAllLines(suggestedUserInputs.getFilePath());
+
+        return new McpSessionManifest(modelName, tools, suggestedInputs);
+    }
+
+    @Bean
+    public NotificationChannel<UserNotification> notificationChannel() {
+        var sink = Sinks.many().multicast().<UserNotification>onBackpressureBuffer();
+        var flux = sink.asFlux();//.cache(0);
+        return new NotificationChannel<UserNotification>(sink, flux);
+    }
+
+    @Bean
+    public NotificationChannel<UserNotificationResponse> notificationResponseChannel() {
+        var sink = Sinks.many().multicast().<UserNotificationResponse>onBackpressureBuffer();
+        var flux = sink.asFlux();//.cache(0);
+        return new NotificationChannel<UserNotificationResponse>(sink, flux);
+    }
+
+}
